@@ -7,63 +7,47 @@ terraform {
   }
 }
 
-resource "aws_iam_user" "sys_admin" {
-  count = 3
-  name = "syst_admin${count.index}"
-}
-resource "aws_iam_user" "db_admin" {
-  count = 3
-  name = "db_admin${count.index}"
-}
-resource "aws_iam_user" "ro_user" {
-  count = 3
-  name = "ro_user${count.index}"
+locals {
+  #Creates a map of {user = job}
+  user_jobs = {for x in var.users : x.name => x.job}
+  #Finds each unique job type and creates a list
+  job_types = toset([for x in var.users : x.job])
+  #Creates an object where each policy is associated with its job
+  permissions = merge([for prms in var.permissions : {for plc in prms.policies[*] : plc => prms.name}]...)
 }
 
-
-resource "aws_iam_group" "iam_groups" {
-for_each =  toset([ "ro_user_group", "db_admin_group", "sys_admin_group" ])
-    name = each.key
+resource "aws_iam_user" "default" {
+  for_each = local.user_jobs
+  name = each.key
 }
 
-resource "aws_iam_group_membership" "sys_admin_assignment" {
-  name = "sys_admin_assignment"
+resource "aws_iam_group" "default" {
+  for_each = local.job_types
+  name = each.value
+  depends_on = [ aws_iam_user.default ]
+}
+
+resource "aws_iam_group_membership" "default" {
+  for_each = local.job_types
+  name = "${each.value}-membership"
+  group = each.value
   users = [
-    aws_iam_user.sys_admin[0].name,
-    aws_iam_user.sys_admin[1].name,
-    aws_iam_user.sys_admin[2].name
+    for x in var.users : x.name if x.job == each.value
   ]
-  group = "sys_admin_group"
+  depends_on = [ aws_iam_group.default ]
 }
 
-resource "aws_iam_group_membership" "db_admin_assignment" {
-  name = "db_admin_assignment"
-  users = [
-    aws_iam_user.db_admin[0].name,
-    aws_iam_user.db_admin[1].name,
-    aws_iam_user.db_admin[2].name
-  ]
-  group = "db_admin_group"
+resource "aws_iam_account_password_policy" "default" {
+  minimum_password_length        = 9
+  require_numbers                = true
+  require_uppercase_characters   = true
+  require_symbols                = true
+  allow_users_to_change_password = true
 }
 
-resource "aws_iam_group_membership" "ro_user_assignment" {
-  name = "ro_user_assignment"
-  users = aws_iam_user.ro_user[*].name
-  
-  group = "ro_user_group"
+resource "aws_iam_group_policy_attachment" "default" {
+  for_each = local.permissions
+  group = each.value
+  policy_arn = each.key
+  depends_on = [ aws_iam_group.default ]
 }
-
- resource "aws_iam_account_password_policy" "strict" {
-   minimum_password_length        = 7
-   require_numbers                = true
-   require_uppercase_characters   = true
-   require_symbols                = true
-   allow_users_to_change_password = true
- }
-/*
- resource "aws_iam_group_policy_attachment" "group_policy_assignments" {
-   for_each =  aws_iam_group.iam_groups
-   group = each.value.name
-   policy_arn = 
- }
- */
